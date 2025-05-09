@@ -1,72 +1,84 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Inject } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
-import { Role, RoleDocument } from '../schemas/role.schema';
+import { Model } from 'mongoose';
+import { Role, RoleDocument } from '../entities/role.entity';
+import { Permission, PermissionDocument } from '../entities/permission.entity';
+import { User } from '../../users/entities/user.entity';
+import { IRoleRepository } from './role.repository.interface';
 
 @Injectable()
-export class RoleRepository {
+export class RoleRepository implements IRoleRepository {
   constructor(
     @InjectModel(Role.name)
     private readonly roleModel: Model<RoleDocument>,
+    @InjectModel(Permission.name)
+    private readonly permissionModel: Model<PermissionDocument>,
   ) {}
 
-  async findAll(): Promise<RoleDocument[]> {
-    return this.roleModel.find().exec();
+  async findAll(): Promise<Role[]> {
+    return this.roleModel.find().populate('permissions').exec();
   }
 
-  async findById(id: number): Promise<RoleDocument | null> {
-    return this.roleModel.findById(id).exec();
+  async findById(id: string): Promise<Role> {
+    return this.roleModel.findById(id).populate('permissions').exec();
   }
 
-  async findByName(name: string): Promise<RoleDocument | null> {
-    return this.roleModel.findOne({ name }).exec();
+  async findByName(name: string): Promise<Role> {
+    return this.roleModel.findOne({ name }).populate('permissions').exec();
   }
 
-  async create(roleData: Partial<Role>): Promise<RoleDocument> {
-    const newRole = new this.roleModel(roleData);
-    return newRole.save();
+  async create(roleData: Partial<Role>): Promise<Role> {
+    const role = new this.roleModel(roleData);
+    return role.save();
   }
 
-  async update(id: number, roleData: Partial<Role>): Promise<RoleDocument | null> {
-    return this.roleModel
-      .findByIdAndUpdate(id, roleData, { new: true })
-      .exec();
+  async update(id: string, roleData: Partial<Role>): Promise<Role> {
+    return this.roleModel.findByIdAndUpdate(id, roleData, { new: true }).populate('permissions').exec();
   }
 
-  async delete(id: number): Promise<boolean> {
-    const result = await this.roleModel.deleteOne({ _id: new Types.ObjectId(id) }).exec();
-    return result.deletedCount > 0;
+  async delete(id: string): Promise<void> {
+    await this.roleModel.findByIdAndDelete(id).exec();
   }
 
-  async addPermission(roleId: number, permissionId: number): Promise<RoleDocument | null> {
-    return this.roleModel
-      .findByIdAndUpdate(
-        roleId,
-        { $addToSet: { permissions: permissionId } },
-        { new: true }
-      )
-      .exec();
+  async assignPermission(roleId: string, permissionId: string): Promise<Role> {
+    const role = await this.findById(roleId);
+    if (!role) {
+      return null;
+    }
+    const permission = await this.permissionModel.findById(permissionId);
+    if (!permission) {
+      return null;
+    }
+    if (!role.permissions.some(p => p.id === permissionId)) {
+      role.permissions.push(permission);
+      await role.save();
+    }
+    return this.findById(roleId);
   }
 
-  async removePermission(roleId: number, permissionId: number): Promise<RoleDocument | null> {
-    return this.roleModel
-      .findByIdAndUpdate(
-        roleId,
-        { $pull: { permissions: permissionId } },
-        { new: true }
-      )
-      .exec();
+  async removePermission(roleId: string, permissionId: string): Promise<Role> {
+    const role = await this.findById(roleId);
+    if (!role) {
+      return null;
+    }
+    role.permissions = role.permissions.filter(p => p.id !== permissionId);
+    await role.save();
+    return this.findById(roleId);
   }
 
-  async findRolesByPermission(permissionId: string): Promise<RoleDocument[]> {
-    return this.roleModel.find({ permissions: permissionId }).exec();
+  async getRolePermissions(roleId: string): Promise<Permission[]> {
+    const role = await this.findById(roleId);
+    if (!role) {
+      return [];
+    }
+    return role.permissions;
   }
 
-  async findActiveRoles(): Promise<RoleDocument[]> {
-    return this.roleModel.find({ isActive: true }).exec();
-  }
-
-  async findRolesByTags(tags: string[]): Promise<RoleDocument[]> {
-    return this.roleModel.find({ tags: { $in: tags } }).exec();
+  async getUsers(roleId: string): Promise<User[]> {
+    const role = await this.findById(roleId);
+    if (!role) {
+      return [];
+    }
+    return role.users;
   }
 } 

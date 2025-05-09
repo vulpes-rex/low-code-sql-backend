@@ -9,6 +9,8 @@ import { Public } from './decorators/public.decorator';
 import { Roles } from './decorators/roles.decorator';
 import { RolesGuard } from './guards/roles.guard';
 import { OAuthProvider } from './decorators/oauth-provider.decorator';
+import { AuthGuard } from '@nestjs/passport';
+import { Response } from 'express';
 
 @Controller('auth')
 export class AuthController {
@@ -29,52 +31,47 @@ export class AuthController {
 
   @Public()
   @Get('google')
-  @UseGuards(OAuthGuard)
+  @UseGuards(AuthGuard('google'))
   async googleAuth() {
-    // This route initiates Google OAuth flow
+    // Guard redirects to Google
   }
 
   @Public()
   @Get('google/callback')
-  @UseGuards(OAuthGuard)
-  async googleAuthCallback(@Req() req, @Res() res) {
-    const result = await this.authService.login(req.user);
-    // Redirect to frontend with tokens
-    res.redirect(`${process.env.FRONTEND_URL}/auth/callback?token=${result.accessToken}`);
+  @UseGuards(AuthGuard('google'))
+  async googleAuthCallback(@Req() req, @Res() res: Response) {
+    const result = await this.authService.validateOAuthLogin(req.user, 'google');
+    res.redirect(`${process.env.FRONTEND_URL}/auth/callback?token=${result.access_token}`);
   }
 
   @Public()
-  @Get('oauth/:provider')
-  @UseGuards(OAuthProviderGuard)
-  @OAuthProvider('google')
-  async oauthAuth(@Req() req) {
-    // This route initiates OAuth flow for the specified provider
+  @Get('github')
+  @UseGuards(AuthGuard('github'))
+  async githubAuth() {
+    // Guard redirects to GitHub
   }
 
   @Public()
-  @Get('oauth/:provider/callback')
-  @UseGuards(OAuthProviderGuard)
-  @OAuthProvider('google')
-  async oauthCallback(@Req() req, @Res() res) {
-    const result = await this.authService.login(req.user);
-    // Redirect to frontend with tokens
-    res.redirect(`${process.env.FRONTEND_URL}/auth/callback?token=${result.accessToken}`);
+  @Get('github/callback')
+  @UseGuards(AuthGuard('github'))
+  async githubAuthCallback(@Req() req, @Res() res: Response) {
+    const result = await this.authService.validateOAuthLogin(req.user, 'github');
+    res.redirect(`${process.env.FRONTEND_URL}/auth/callback?token=${result.access_token}`);
   }
 
   @Public()
   @Get('saml')
-  @UseGuards(SamlAuthGuard)
+  @UseGuards(AuthGuard('saml'))
   async samlAuth() {
-    // This route initiates SAML authentication flow
+    // Guard redirects to SAML IdP
   }
 
   @Public()
-  @Post('saml/callback')
-  @UseGuards(SamlAuthGuard)
-  async samlCallback(@Req() req, @Res() res) {
-    const result = await this.authService.login(req.user);
-    // Redirect to frontend with tokens
-    res.redirect(`${process.env.FRONTEND_URL}/auth/callback?token=${result.accessToken}`);
+  @Get('saml/callback')
+  @UseGuards(AuthGuard('saml'))
+  async samlAuthCallback(@Req() req, @Res() res: Response) {
+    const result = await this.authService.validateOAuthLogin(req.user, 'saml');
+    res.redirect(`${process.env.FRONTEND_URL}/auth/callback?token=${result.access_token}`);
   }
 
   @Public()

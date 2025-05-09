@@ -7,7 +7,7 @@ import { QueryOptimizerService } from './services/query-optimizer.service';
 import { QueryValidatorService } from './services/query-validator.service';
 
 @Module({
-  imports: [DatabaseModule],
+  imports: [DatabaseModule.forRoot()],
   providers: [
     QueryBuilderService,
     QueryParserService,

@@ -1,10 +1,13 @@
-import { Injectable, UnauthorizedException, BadRequestException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, BadRequestException, ConflictException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { UsersService } from '../users/users.service';
 import { RolesService } from '../roles/roles.service';
 import { ConfigService } from '@nestjs/config';
 import { OAuth2Client } from 'google-auth-library';
 import { SAML } from 'passport-saml';
+import { CreateUserDto } from '../users/dto/create-user.dto';
+import { UpdateUserDto } from '../users/dto/update-user.dto';
+import * as bcrypt from 'bcrypt';
 
 interface BaseProfile {
   email: string;
@@ -69,8 +72,8 @@ export class AuthService {
     }
   }
 
-  async validateUser(username: string, password: string): Promise<any> {
-    const user = await this.usersService.findByUsername(username);
+  async validateUser(email: string, password: string): Promise<any> {
+    const user = await this.usersService.findByEmail(email);
     if (user && await this.usersService.validatePassword(user, password)) {
       const { password, ...result } = user;
       return result;
@@ -79,28 +82,63 @@ export class AuthService {
   }
 
   async login(user: any) {
-    const payload = {
-      sub: user.id,
-      username: user.username,
-      email: user.email,
-      roles: user.roles,
-    };
-
-    const [accessToken, refreshToken] = await Promise.all([
-      this.generateAccessToken(payload),
-      this.generateRefreshToken(payload),
-    ]);
-
+    const payload = { email: user.email, sub: user.id };
     return {
-      accessToken,
-      refreshToken,
-      user: {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        roles: user.roles,
-      },
+      access_token: this.jwtService.sign(payload),
     };
+  }
+
+  async register(createUserDto: CreateUserDto) {
+    const existingUser = await this.usersService.findByEmail(createUserDto.email);
+    if (existingUser) {
+      throw new ConflictException('User with this email already exists');
+    }
+
+    const user = await this.usersService.create(createUserDto);
+    const defaultRole = await this.rolesService.findByName('user');
+    if (defaultRole) {
+      await this.usersService.addRole(user.id, defaultRole.id);
+    }
+
+    const { password, ...result } = user;
+    return result;
+  }
+
+  async validateOAuthLogin(profile: any, provider: string) {
+    try {
+      let user = await this.usersService.findByEmail(profile.email);
+
+      if (!user) {
+        const randomPassword = Math.random().toString(36).slice(-8);
+        const hashedPassword = await bcrypt.hash(randomPassword, 10);
+        
+        const userData: CreateUserDto = {
+          email: profile.email,
+          username: profile.username || profile.email.split('@')[0],
+          password: hashedPassword,
+          name: profile.name,
+          providerId: profile.id,
+          provider: provider,
+        };
+
+        user = await this.usersService.create(userData);
+        const defaultRole = await this.rolesService.findByName('user');
+        if (defaultRole) {
+          await this.usersService.addRole(user.id, defaultRole.id);
+        }
+      } else {
+        const updateData: UpdateUserDto = {
+          providerId: profile.id,
+          provider: provider,
+        };
+        await this.usersService.update(user.id, updateData);
+      }
+
+      user = await this.usersService.findById(user.id);
+      return this.login(user);
+    } catch (err) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
   }
 
   async refreshToken(refreshToken: string) {
@@ -210,12 +248,13 @@ export class AuthService {
         user = await this.usersService.create({
           ...userData,
           username,
+          password: Math.random().toString(36).slice(-8), // Generate a random password
         });
 
         // Assign default role to new user
         const defaultRole = await this.rolesService.findByName('user');
         if (defaultRole) {
-          await this.usersService.assignRole(user.id, defaultRole.id);
+          await this.usersService.addRole(user.id, defaultRole.id);
         }
       } else if (user.provider !== profile.provider) {
         // If user exists but with a different provider, update the provider info

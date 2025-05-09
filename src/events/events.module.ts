@@ -11,7 +11,7 @@ import { QueryBuilderModule } from '../query-builder/query-builder.module';
       secret: process.env.JWT_SECRET || 'your-secret-key',
       signOptions: { expiresIn: '1d' },
     }),
-    DatabaseModule,
+    DatabaseModule.forRoot(),
     QueryBuilderModule
   ],
   providers: [EventsGateway, EventsService],

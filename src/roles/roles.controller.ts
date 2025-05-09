@@ -8,11 +8,14 @@ import {
   Param,
   UseGuards,
   ParseIntPipe,
+  Patch,
 } from '@nestjs/common';
 import { RolesService } from './roles.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { CreateRoleDto } from './dto/create-role.dto';
+import { UpdateRoleDto } from './dto/update-role.dto';
 
 @Controller('roles')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -21,51 +24,48 @@ export class RolesController {
 
   @Post()
   @Roles('admin')
-  async create(@Body() roleData: { name: string; description?: string }) {
-    return this.rolesService.create(roleData);
+  create(@Body() createRoleDto: CreateRoleDto) {
+    return this.rolesService.create(createRoleDto);
   }
 
   @Get()
   @Roles('admin')
-  async findAll() {
+  findAll() {
     return this.rolesService.findAll();
   }
 
   @Get(':id')
   @Roles('admin')
-  async findOne(@Param('id', ParseIntPipe) id: number) {
+  findOne(@Param('id') id: string) {
     return this.rolesService.findById(id);
   }
 
-  @Put(':id')
+  @Patch(':id')
   @Roles('admin')
-  async update(
-    @Param('id', ParseIntPipe) id: number,
-    @Body() roleData: Partial<any>,
-  ) {
-    return this.rolesService.update(id, roleData);
+  update(@Param('id') id: string, @Body() updateRoleDto: UpdateRoleDto) {
+    return this.rolesService.update(id, updateRoleDto);
   }
 
   @Delete(':id')
   @Roles('admin')
-  async remove(@Param('id', ParseIntPipe) id: number) {
+  remove(@Param('id') id: string) {
     return this.rolesService.delete(id);
   }
 
   @Post(':roleId/permissions/:permissionId')
   @Roles('admin')
-  async assignPermission(
-    @Param('roleId', ParseIntPipe) roleId: number,
-    @Param('permissionId', ParseIntPipe) permissionId: number,
+  assignPermission(
+    @Param('roleId') roleId: string,
+    @Param('permissionId') permissionId: string,
   ) {
     return this.rolesService.assignPermission(roleId, permissionId);
   }
 
   @Delete(':roleId/permissions/:permissionId')
   @Roles('admin')
-  async removePermission(
-    @Param('roleId', ParseIntPipe) roleId: number,
-    @Param('permissionId', ParseIntPipe) permissionId: number,
+  removePermission(
+    @Param('roleId') roleId: string,
+    @Param('permissionId') permissionId: string,
   ) {
     return this.rolesService.removePermission(roleId, permissionId);
   }
