@@ -1,9 +1,15 @@
-# MongoDB Configuration
-MONGODB_URI=mongodb://localhost:27017/low-code-sql
+# Main application database (choose one)
+DB_TYPE=mongodb  # or postgres, mysql, sqlite
+MONGODB_URI=mongodb://localhost:27017/low-code-sql  # if using mongodb
+DB_HOST=localhost  # if using postgres/mysql
+DB_PORT=5432
+DB_USERNAME=postgres
+DB_PASSWORD=postgres
+DB_DATABASE=low_code_sql
 
 # JWT Configuration
 JWT_SECRET=your-super-secret-key-change-in-production
-JWT_EXPIRATION=1d
+JWT_EXPIRATION=1h
 
 # Database Connection Pool Settings
 DB_POOL_MIN=2

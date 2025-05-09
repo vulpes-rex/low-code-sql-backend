@@ -13,9 +13,15 @@ import { LocalStrategy } from '../auth/strategies/local.strategy';
 import { OAuthStrategy } from '../auth/strategies/oauth.strategy';
 import { SamlStrategy } from '../auth/strategies/saml.strategy';
 import { RolesModule } from '../roles/roles.module';
+import { DatabaseModule } from '../database/database.module';
+import { UserRepository } from '../users/repositories/user.repository';
+import { UserSequelizeRepository } from '../users/repositories/user.sequelize.repository';
+import { RolesService } from '../roles/roles.service';
 
 @Module({
   imports: [
+    ConfigModule,
+    DatabaseModule.forRoot(),
     MongooseModule.forFeature([
       { name: User.name, schema: UserSchema },
       { name: UserRole.name, schema: UserRoleSchema },
@@ -32,13 +38,23 @@ import { RolesModule } from '../roles/roles.module';
       }),
       inject: [ConfigService],
     }),
-    forwardRef(() => RolesModule),
+    RolesModule.forRoot(),
   ],
   providers: [
     UsersService,
     AuthService,
+    RolesService,
     JwtStrategy,
     LocalStrategy,
+    {
+      provide: 'UserRepository',
+      useFactory: (configService: ConfigService, userModel: any) => {
+        return configService.get<string>('DB_TYPE') === 'mongodb'
+          ? new UserRepository(userModel)
+          : new UserSequelizeRepository(userModel);
+      },
+      inject: [ConfigService, 'UserModel'],
+    },
     {
       provide: OAuthStrategy,
       useFactory: (configService: ConfigService, authService: AuthService) => {
@@ -72,10 +88,11 @@ import { RolesModule } from '../roles/roles.module';
   exports: [
     UsersService,
     AuthService,
+    RolesService,
     MongooseModule,
     PassportModule,
     JwtModule,
-    RolesModule,
+    'UserRepository',
   ],
 })
 export class SharedModule {} 

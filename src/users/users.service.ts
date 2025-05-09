@@ -1,109 +1,101 @@
-import { Injectable, ConflictException, NotFoundException } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
-import { User, UserDocument } from './schemas/user.schema';
-import { Role } from '../roles/schemas/role.schema';
+import { Injectable, NotFoundException, ConflictException, Inject } from '@nestjs/common';
+import { IUserRepository } from './repositories/user.repository.interface';
+import { User } from './entities/user.entity';
+import { CreateUserDto } from './dto/create-user.dto';
+import { UpdateUserDto } from './dto/update-user.dto';
 import * as bcrypt from 'bcrypt';
 
 @Injectable()
 export class UsersService {
   constructor(
-    @InjectModel(User.name)
-    private readonly userModel: Model<UserDocument>,
+    @Inject('UserRepository')
+    private readonly userRepository: IUserRepository,
   ) {}
 
-  async findAll(): Promise<UserDocument[]> {
-    return this.userModel.find().exec();
-  }
-
-  async create(userData: {
-    email: string;
-    username: string;
-    password?: string;
-    name?: string;
-    provider?: string;
-    providerId?: string;
-  }): Promise<UserDocument> {
-    const existingUser = await this.findByEmail(userData.email);
+  async create(createUserDto: CreateUserDto): Promise<User> {
+    const existingUser = await this.userRepository.findByEmail(createUserDto.email);
     if (existingUser) {
       throw new ConflictException('User with this email already exists');
     }
 
-    const hashedPassword = userData.password
-      ? await bcrypt.hash(userData.password, 10)
-      : null;
-
-    const newUser = new this.userModel({
-      ...userData,
+    const hashedPassword = await bcrypt.hash(createUserDto.password, 10);
+    return this.userRepository.create({
+      ...createUserDto,
       password: hashedPassword,
     });
-
-    return newUser.save();
   }
 
-  async findByEmail(email: string): Promise<UserDocument | null> {
-    return this.userModel.findOne({ email }).exec();
+  async findAll(): Promise<User[]> {
+    return this.userRepository.findAll();
   }
 
-  async findById(id: number): Promise<UserDocument | null> {
-    return this.userModel.findById(id).exec();
-  }
-
-  async findByUsername(username: string): Promise<UserDocument | null> {
-    return this.userModel.findOne({ username }).exec();
-  }
-
-  async validatePassword(user: UserDocument, password: string): Promise<boolean> {
-    if (!user.password) {
-      return false;
+  async findById(id: string): Promise<User> {
+    const user = await this.userRepository.findById(id);
+    if (!user) {
+      throw new NotFoundException('User not found');
     }
+    return user;
+  }
+
+  async findByEmail(email: string): Promise<User> {
+    const user = await this.userRepository.findByEmail(email);
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+    return user;
+  }
+
+  async findByUsername(username: string): Promise<User> {
+    const user = await this.userRepository.findByUsername(username);
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+    return user;
+  }
+
+  async update(id: string, updateUserDto: UpdateUserDto): Promise<User> {
+    const user = await this.findById(id);
+    if (updateUserDto.password) {
+      updateUserDto.password = await bcrypt.hash(updateUserDto.password, 10);
+    }
+    return this.userRepository.update(id, updateUserDto);
+  }
+
+  async remove(id: string): Promise<void> {
+    const user = await this.findById(id);
+    await this.userRepository.delete(id);
+  }
+
+  async findActiveUsers(): Promise<User[]> {
+    return this.userRepository.findActiveUsers();
+  }
+
+  async findUsersByRole(roleId: string): Promise<User[]> {
+    return this.userRepository.findUsersByRole(roleId);
+  }
+
+  async addRole(userId: string, roleId: string): Promise<User> {
+    return this.userRepository.addRole(userId, roleId);
+  }
+
+  async removeRole(userId: string, roleId: string): Promise<User> {
+    return this.userRepository.removeRole(userId, roleId);
+  }
+
+  async updatePassword(userId: string, password: string): Promise<User> {
+    const hashedPassword = await bcrypt.hash(password, 10);
+    return this.userRepository.updatePassword(userId, hashedPassword);
+  }
+
+  async updateMetadata(userId: string, metadata: Record<string, any>): Promise<User> {
+    return this.userRepository.updateMetadata(userId, metadata);
+  }
+
+  async validatePassword(user: User, password: string): Promise<boolean> {
     return bcrypt.compare(password, user.password);
   }
 
-  async update(id: number, userData: Partial<User>): Promise<UserDocument> {
-    const user = await this.findById(id);
-    if (!user) {
-      throw new NotFoundException('User not found');
-    }
-
-    if (userData.password) {
-      userData.password = await bcrypt.hash(userData.password, 10);
-    }
-
-    Object.assign(user, userData);
-    return user.save();
-  }
-
-  async delete(id: number): Promise<void> {
-    const result = await this.userModel.deleteOne({ _id: new Types.ObjectId(id) }).exec();
-    if (result.deletedCount === 0) {
-      throw new NotFoundException('User not found');
-    }
-  }
-
-  async assignRole(userId: number, roleId: number): Promise<UserDocument> {
-    const user = await this.findById(userId);
-    if (!user) {
-      throw new NotFoundException('User not found');
-    }
-
-    if (!user.roles.includes(roleId)) {
-      user.roles.push(roleId);
-      await user.save();
-    }
-
-    return this.findById(userId);
-  }
-
-  async removeRole(userId: number, roleId: number): Promise<UserDocument> {
-    const user = await this.findById(userId);
-    if (!user) {
-      throw new NotFoundException('User not found');
-    }
-
-    user.roles = user.roles.filter(role => role !== roleId);
-    await user.save();
-
-    return this.findById(userId);
+  async getUserRoles(userId: string): Promise<User> {
+    return this.userRepository.findById(userId);
   }
 } 
