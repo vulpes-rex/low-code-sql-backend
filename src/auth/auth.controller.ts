@@ -1,4 +1,4 @@
-import { Controller, Post, Body, UseGuards, Get, Req, Res, HttpCode } from '@nestjs/common';
+import { Controller, Post, Body, UseGuards, Get, Req, Res, HttpCode, Param } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { LocalAuthGuard } from './guards/local-auth.guard';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
@@ -8,7 +8,7 @@ import { SamlAuthGuard } from './guards/saml-auth.guard';
 import { Public } from './decorators/public.decorator';
 import { Roles } from './decorators/roles.decorator';
 import { RolesGuard } from './guards/roles.guard';
-import { OAuthProvider } from './decorators/oauth-provider.decorator';
+import { OAuthProvider } from './types/auth.types';
 import { AuthGuard } from '@nestjs/passport';
 import { Response } from 'express';
 
@@ -40,7 +40,8 @@ export class AuthController {
   @Get('google/callback')
   @UseGuards(AuthGuard('google'))
   async googleAuthCallback(@Req() req, @Res() res: Response) {
-    const result = await this.authService.validateOAuthLogin(req.user, 'google');
+    const user = await this.authService.validateOAuthLogin(req.user, OAuthProvider.GOOGLE);
+    const result = await this.authService.login(user);
     res.redirect(`${process.env.FRONTEND_URL}/auth/callback?token=${result.access_token}`);
   }
 
@@ -55,7 +56,8 @@ export class AuthController {
   @Get('github/callback')
   @UseGuards(AuthGuard('github'))
   async githubAuthCallback(@Req() req, @Res() res: Response) {
-    const result = await this.authService.validateOAuthLogin(req.user, 'github');
+    const user = await this.authService.validateOAuthLogin(req.user, OAuthProvider.GITHUB);
+    const result = await this.authService.login(user);
     res.redirect(`${process.env.FRONTEND_URL}/auth/callback?token=${result.access_token}`);
   }
 
@@ -70,15 +72,16 @@ export class AuthController {
   @Get('saml/callback')
   @UseGuards(AuthGuard('saml'))
   async samlAuthCallback(@Req() req, @Res() res: Response) {
-    const result = await this.authService.validateOAuthLogin(req.user, 'saml');
+    const user = await this.authService.validateOAuthLogin(req.user, OAuthProvider.SAML);
+    const result = await this.authService.login(user);
     res.redirect(`${process.env.FRONTEND_URL}/auth/callback?token=${result.access_token}`);
   }
 
   @Public()
-  @Post('oauth/token')
+  @Get('oauth/:provider/validate')
   async validateOAuthToken(
+    @Param('provider') provider: OAuthProvider,
     @Body('token') token: string,
-    @Body('provider') provider: string,
   ) {
     const user = await this.authService.validateOAuthToken(token, provider);
     return this.authService.login(user);

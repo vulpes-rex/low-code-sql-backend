@@ -1,191 +1,151 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
-import { DatabaseService } from '../../database/database.service';
-import { DatabaseType } from '../../database/types/database-clients.types';
-import { DatabaseConnectionDocument } from '../../database/schemas/database-connection.schema';
-
-export interface OptimizationResult {
-  originalQuery: string;
-  optimizedQuery: string;
-  explainPlan: any;
-  suggestions: string[];
-  estimatedCost: number;
-}
+import { QueryNode, QueryNodeType, QueryOptimizationResult } from '../types/query-builder.types';
+import { QueryParserService } from './query-parser.service';
 
 @Injectable()
 export class QueryOptimizerService {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly parser: QueryParserService,
+  ) {}
 
-  async optimizeQuery(connectionId: string, query: string): Promise<OptimizationResult> {
-    const connection = await this.databaseService.getConnection(connectionId, connectionId);
-    if (!connection) {
-      throw new BadRequestException('Database connection not found');
+  optimizeQuery(query: QueryNode): QueryOptimizationResult {
+    const appliedOptimizations: string[] = [];
+    let optimizedQuery = this.buildQuery(query);
+
+    // Add basic optimizations
+    if (query.type === QueryNodeType.SELECT) {
+      if (query.limit && !query.orderBy) {
+        appliedOptimizations.push('Added ORDER BY for LIMIT optimization');
+        optimizedQuery += ' ORDER BY 1';
+      }
     }
 
-    const explainPlan = await this.getExplainPlan(connectionId, query);
-    const suggestions = this.generateOptimizationSuggestions(explainPlan, connection.type);
-    const optimizedQuery = await this.rewriteQuery(query, suggestions, connection.type);
-
     return {
-      originalQuery: query,
+      originalQuery: this.buildQuery(query),
       optimizedQuery,
-      explainPlan,
-      suggestions,
-      estimatedCost: this.calculateEstimatedCost(explainPlan, connection.type),
+      appliedOptimizations,
     };
   }
 
-  private async getExplainPlan(connectionId: string, query: string): Promise<any> {
-    const connection = await this.databaseService.getConnection(connectionId, connectionId);
-    if (!connection) {
-      throw new BadRequestException('Database connection not found');
-    }
-
-    const explainQuery = this.buildExplainQuery(query, connection.type);
-    return this.databaseService.executeQuery(connection, explainQuery);
-  }
-
-  private buildExplainQuery(query: string, databaseType: DatabaseType): string {
-    switch (databaseType) {
-      case DatabaseType.POSTGRESQL:
-        return `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${query}`;
-      case DatabaseType.MYSQL:
-        return `EXPLAIN FORMAT=JSON ${query}`;
-      case DatabaseType.SQLSERVER:
-        return `SET SHOWPLAN_XML ON; ${query}; SET SHOWPLAN_XML OFF;`;
-      case DatabaseType.MONGODB:
-        return `db.collection.explain("executionStats").find(${query})`;
+  private buildQuery(query: QueryNode): string {
+    switch (query.type) {
+      case QueryNodeType.SELECT:
+        return this.buildSelectQuery(query);
+      case QueryNodeType.INSERT:
+        return this.buildInsertQuery(query);
+      case QueryNodeType.UPDATE:
+        return this.buildUpdateQuery(query);
+      case QueryNodeType.DELETE:
+        return this.buildDeleteQuery(query);
+      case QueryNodeType.CREATE:
+        return this.buildCreateQuery(query);
+      case QueryNodeType.DROP:
+        return this.buildDropQuery(query);
       default:
-        throw new BadRequestException(`Unsupported database type: ${databaseType}`);
+        throw new BadRequestException(`Unsupported query type: ${query.type}`);
     }
   }
 
-  private generateOptimizationSuggestions(explainPlan: any, databaseType: DatabaseType): string[] {
-    const suggestions: string[] = [];
+  private buildSelectQuery(query: QueryNode): string {
+    const columns = query.columns?.map(col => 
+      typeof col === 'string' ? col : col.name
+    ).join(', ') || '*';
 
-    switch (databaseType) {
-      case DatabaseType.POSTGRESQL:
-        this.analyzePostgresPlan(explainPlan, suggestions);
-        break;
-      case DatabaseType.MYSQL:
-        this.analyzeMysqlPlan(explainPlan, suggestions);
-        break;
-      case DatabaseType.SQLSERVER:
-        this.analyzeSqlServerPlan(explainPlan, suggestions);
-        break;
-      case DatabaseType.MONGODB:
-        this.analyzeMongoPlan(explainPlan, suggestions);
-        break;
+    let sql = `SELECT ${columns} FROM ${query.table}`;
+
+    if (query.joins) {
+      sql += ' ' + query.joins.map(join => 
+        `${join.type} JOIN ${join.table} ON ${join.on}`
+      ).join(' ');
     }
 
-    return suggestions;
-  }
-
-  private analyzePostgresPlan(plan: any, suggestions: string[]): void {
-    if (plan.Plan) {
-      // Check for sequential scans
-      if (plan.Plan.Node_Type === 'Seq Scan') {
-        suggestions.push('Consider adding an index to avoid sequential scan');
-      }
-
-      // Check for nested loops
-      if (plan.Plan.Node_Type === 'Nested Loop') {
-        suggestions.push('Consider optimizing join conditions or adding indexes');
-      }
-
-      // Check for high cost operations
-      if (plan.Plan.Total_Cost > 1000) {
-        suggestions.push('Query might benefit from additional optimization');
-      }
+    if (query.where) {
+      sql += ` WHERE ${query.where}`;
     }
-  }
 
-  private analyzeMysqlPlan(plan: any, suggestions: string[]): void {
-    if (plan.query_block) {
-      // Check for full table scans
-      if (plan.query_block.table.type === 'ALL') {
-        suggestions.push('Consider adding an index to avoid full table scan');
-      }
-
-      // Check for temporary tables
-      if (plan.query_block.using_temporary_table) {
-        suggestions.push('Consider optimizing GROUP BY or ORDER BY clauses');
-      }
+    if (query.orderBy) {
+      sql += ' ORDER BY ' + query.orderBy.map(order => 
+        `${order.column} ${order.direction}`
+      ).join(', ');
     }
-  }
 
-  private analyzeSqlServerPlan(plan: any, suggestions: string[]): void {
-    // SQL Server specific analysis
-    if (plan.ShowPlanXML?.BatchSequence?.Batch?.Statements?.StmtSimple) {
-      const stmt = plan.ShowPlanXML.BatchSequence.Batch.Statements.StmtSimple;
-      
-      // Check for table scans
-      if (stmt.QueryPlan?.RelOp?.PhysicalOp === 'Table Scan') {
-        suggestions.push('Consider adding an index to avoid table scan');
-      }
-
-      // Check for high cost operations
-      if (stmt.QueryPlan?.RelOp?.EstimatedTotalSubtreeCost > 1) {
-        suggestions.push('Query might benefit from additional optimization');
-      }
+    if (query.limit) {
+      sql += ` LIMIT ${query.limit}`;
     }
-  }
 
-  private analyzeMongoPlan(plan: any, suggestions: string[]): void {
-    if (plan.executionStats) {
-      // Check for collection scans
-      if (plan.executionStats.executionStages.stage === 'COLLSCAN') {
-        suggestions.push('Consider adding an index to avoid collection scan');
-      }
-
-      // Check for high execution time
-      if (plan.executionStats.executionTimeMillis > 100) {
-        suggestions.push('Query might benefit from additional optimization');
-      }
+    if (query.offset) {
+      sql += ` OFFSET ${query.offset}`;
     }
+
+    return sql;
   }
 
-  private async rewriteQuery(
-    query: string,
-    suggestions: string[],
-    databaseType: DatabaseType,
-  ): Promise<string> {
-    let optimizedQuery = query;
-
-    // Apply basic optimizations
-    optimizedQuery = this.removeUnnecessaryJoins(optimizedQuery);
-    optimizedQuery = this.optimizeWhereClause(optimizedQuery);
-    optimizedQuery = this.optimizeOrderBy(optimizedQuery);
-
-    return optimizedQuery;
-  }
-
-  private removeUnnecessaryJoins(query: string): string {
-    // Implement join optimization logic
-    return query;
-  }
-
-  private optimizeWhereClause(query: string): string {
-    // Implement WHERE clause optimization logic
-    return query;
-  }
-
-  private optimizeOrderBy(query: string): string {
-    // Implement ORDER BY optimization logic
-    return query;
-  }
-
-  private calculateEstimatedCost(explainPlan: any, databaseType: DatabaseType): number {
-    switch (databaseType) {
-      case DatabaseType.POSTGRESQL:
-        return explainPlan.Plan?.Total_Cost || 0;
-      case DatabaseType.MYSQL:
-        return explainPlan.query_block?.cost_info?.query_cost || 0;
-      case DatabaseType.SQLSERVER:
-        return explainPlan.ShowPlanXML?.BatchSequence?.Batch?.Statements?.StmtSimple?.QueryPlan?.RelOp?.EstimatedTotalSubtreeCost || 0;
-      case DatabaseType.MONGODB:
-        return explainPlan.executionStats?.executionTimeMillis || 0;
-      default:
-        return 0;
+  private buildInsertQuery(query: QueryNode): string {
+    if (!query.columns || !query.values) {
+      throw new BadRequestException('Columns and values are required for INSERT query');
     }
+
+    const columns = query.columns.map(col => 
+      typeof col === 'string' ? col : col.name
+    ).join(', ');
+
+    const values = query.values.map(value => 
+      Array.isArray(value) ? `(${value.join(', ')})` : `(${value})`
+    ).join(', ');
+
+    return `INSERT INTO ${query.table} (${columns}) VALUES ${values}`;
+  }
+
+  private buildUpdateQuery(query: QueryNode): string {
+    if (!query.columns || !query.values) {
+      throw new BadRequestException('Columns and values are required for UPDATE query');
+    }
+
+    const setClause = query.columns.map((col, index) => {
+      const column = typeof col === 'string' ? col : col.name;
+      return `${column} = ${query.values![index]}`;
+    }).join(', ');
+
+    let sql = `UPDATE ${query.table} SET ${setClause}`;
+
+    if (query.where) {
+      sql += ` WHERE ${query.where}`;
+    }
+
+    return sql;
+  }
+
+  private buildDeleteQuery(query: QueryNode): string {
+    let sql = `DELETE FROM ${query.table}`;
+
+    if (query.where) {
+      sql += ` WHERE ${query.where}`;
+    }
+
+    return sql;
+  }
+
+  private buildCreateQuery(query: QueryNode): string {
+    if (!query.columns) {
+      throw new BadRequestException('Columns are required for CREATE query');
+    }
+
+    const columns = query.columns.map(col => {
+      if (typeof col === 'string') {
+        return col;
+      }
+      const constraints = [];
+      if (col.isPrimary) constraints.push('PRIMARY KEY');
+      if (col.isUnique) constraints.push('UNIQUE');
+      if (!col.nullable) constraints.push('NOT NULL');
+      if (col.defaultValue !== undefined) constraints.push(`DEFAULT ${col.defaultValue}`);
+      return `${col.name} ${col.type} ${constraints.join(' ')}`;
+    }).join(', ');
+
+    return `CREATE TABLE ${query.table} (${columns})`;
+  }
+
+  private buildDropQuery(query: QueryNode): string {
+    return `DROP TABLE ${query.table}`;
   }
 } 
