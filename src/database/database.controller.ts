@@ -1,132 +1,75 @@
-import {
-  Controller,
-  Get,
-  Post,
-  Put,
-  Delete,
-  Body,
-  Param,
-  Query,
-  UseGuards,
-  HttpCode,
-  HttpStatus,
-  BadRequestException,
-  NotFoundException,
-} from '@nestjs/common';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { RolesGuard } from '../auth/guards/roles.guard';
-import { Roles } from '../auth/decorators/roles.decorator';
+import { Controller, Get, Post, Put, Delete, Body, Param, Query } from '@nestjs/common';
 import { DatabaseService } from './database.service';
-import { DatabaseConnection } from './schemas/database-connection.schema';
-import { CreateConnectionDto } from './dto/create-connection.dto';
-import { UpdateConnectionDto } from './dto/update-connection.dto';
-import { TestConnectionDto } from './dto/test-connection.dto';
-import { PaginationDto } from '../common/dto/pagination.dto';
-import { User } from '../common/decorators/user.decorator';
+import { DatabaseConfigService } from './services/database-config.service';
+import { DatabaseConfig } from './entities/database-config.entity';
+
+interface ApiResponse<T> {
+  data: T;
+  message?: string;
+  error?: string;
+}
 
 @Controller('database')
-@UseGuards(JwtAuthGuard)
 export class DatabaseController {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly databaseConfigService: DatabaseConfigService,
+  ) {}
 
   @Post('connections')
-  async createConnection(
-    @User('id') userId: string,
-    @Body() createConnectionDto: CreateConnectionDto,
-  ) {
-    return this.databaseService.createConnection(userId, createConnectionDto);
+  async createConnection(@Body() config: Partial<DatabaseConfig>): Promise<ApiResponse<DatabaseConfig>> {
+    const data = await this.databaseConfigService.create(config);
+    return { data };
   }
 
   @Get('connections')
-  async getConnections(
-    @User('id') userId: string,
-    @Query() paginationDto: PaginationDto,
-  ) {
-    return this.databaseService.getConnections(userId, paginationDto);
+  async getConnections(): Promise<ApiResponse<DatabaseConfig[]>> {
+    const data = await this.databaseConfigService.findAll();
+    return { data };
   }
 
   @Get('connections/:id')
-  async getConnection(
-    @User('id') userId: string,
-    @Param('id') id: string,
-  ) {
-    return this.databaseService.getConnection(userId, id);
+  async getConnection(@Param('id') id: string): Promise<ApiResponse<DatabaseConfig>> {
+    const data = await this.databaseConfigService.findById(id);
+    return { data };
   }
 
   @Put('connections/:id')
   async updateConnection(
-    @User('id') userId: string,
     @Param('id') id: string,
-    @Body() updateConnectionDto: UpdateConnectionDto,
-  ) {
-    return this.databaseService.updateConnection(userId, id, updateConnectionDto);
+    @Body() config: Partial<DatabaseConfig>,
+  ): Promise<ApiResponse<DatabaseConfig>> {
+    const data = await this.databaseConfigService.update(id, config);
+    return { data };
   }
 
   @Delete('connections/:id')
-  async deleteConnection(
-    @User('id') userId: string,
-    @Param('id') id: string,
-  ) {
-    return this.databaseService.deleteConnection(userId, id);
+  async deleteConnection(@Param('id') id: string): Promise<ApiResponse<void>> {
+    await this.databaseConfigService.remove(id);
+    return { data: undefined };
   }
 
-  @Post('connections/:id/test')
-  async testConnection(
-    @User('id') userId: string,
-    @Param('id') id: string,
-  ) {
-    const connection = await this.databaseService.getConnection(userId, id);
-    return this.databaseService.testConnection(connection);
+  @Get('query')
+  async executeQuery(
+    @Query('connectionId') connectionId: string,
+    @Query('query') query: string,
+  ): Promise<ApiResponse<any>> {
+    const data = await this.databaseService.executeQuery(connectionId, query);
+    return { data };
   }
 
-  @Get('connections/:id/schemas')
-  async getSchemas(
-    @User('id') userId: string,
-    @Param('id') id: string,
-  ) {
-    return this.databaseService.getSchemas(userId, id);
+  @Get('schemas')
+  async getSchemas(@Query('connectionId') connectionId: string): Promise<ApiResponse<string[]>> {
+    const data = await this.databaseService.getSchemas(connectionId);
+    return { data };
   }
 
-  @Get('connections/:id/tables')
-  async getTables(
-    @User('id') userId: string,
-    @Param('id') id: string,
-    @Query('schema') schema?: string,
-  ) {
-    return this.databaseService.getTables(userId, id, schema);
-  }
-
-  @Get('connections/:id/tables/:tableName/columns')
-  async getTableColumns(
-    @User('id') userId: string,
-    @Param('id') id: string,
+  @Get('tables/:tableName/schema')
+  async getTableSchema(
+    @Query('connectionId') connectionId: string,
     @Param('tableName') tableName: string,
-    @Query('schema') schema?: string,
-  ) {
-    return this.databaseService.getTableColumns(userId, id, tableName, schema);
-  }
-
-  @Get('connections/:id/status')
-  async getConnectionStatus(
-    @User('id') userId: string,
-    @Param('id') id: string,
-  ) {
-    return this.databaseService.getConnectionStatus(userId, id);
-  }
-
-  @Post('connections/:id/encrypt')
-  async encryptConnection(
-    @User('id') userId: string,
-    @Param('id') id: string,
-  ) {
-    return this.databaseService.encryptConnection(userId, id);
-  }
-
-  @Post('connections/:id/decrypt')
-  async decryptConnection(
-    @User('id') userId: string,
-    @Param('id') id: string,
-  ) {
-    return this.databaseService.decryptConnection(userId, id);
+  ): Promise<ApiResponse<any>> {
+    const data = await this.databaseService.getTableSchema(connectionId, tableName);
+    return { data };
   }
 } 

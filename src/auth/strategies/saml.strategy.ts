@@ -1,32 +1,28 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { Strategy } from 'passport-saml';
-import { ConfigService } from '@nestjs/config';
 import { AuthService } from '../auth.service';
 
 @Injectable()
 export class SamlStrategy extends PassportStrategy(Strategy, 'saml') {
-  constructor(
-    private readonly configService: ConfigService,
-    private readonly authService: AuthService,
-  ) {
+  constructor(private readonly authService: AuthService) {
     super({
-      entryPoint: configService.get<string>('SAML_ENTRY_POINT'),
-      issuer: configService.get<string>('SAML_ISSUER'),
-      callbackUrl: configService.get<string>('SAML_CALLBACK_URL'),
-      cert: configService.get<string>('SAML_CERT'),
-      identifierFormat: 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
+      entryPoint: process.env.SAML_ENTRY_POINT,
+      issuer: process.env.SAML_ISSUER,
+      callbackUrl: process.env.SAML_CALLBACK_URL,
+      cert: process.env.SAML_CERT,
     });
   }
 
-  async validate(profile: any): Promise<any> {
-    const user = await this.authService.findOrCreateUser({
-      email: profile.email,
-      name: profile.displayName,
-      provider: 'saml',
-      providerId: profile.nameID,
-    });
-
-    return user;
+  async validate(profile: any) {
+    try {
+      const user = await this.authService.validateSamlResponse(profile);
+      if (!user) {
+        throw new UnauthorizedException('User not found');
+      }
+      return user;
+    } catch (error) {
+      throw new UnauthorizedException('Invalid SAML credentials');
+    }
   }
 } 

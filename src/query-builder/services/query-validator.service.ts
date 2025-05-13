@@ -1,230 +1,138 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
-import { DatabaseService } from '../../database/database.service';
-import { DatabaseType } from '../../database/types/database-clients.types';
-import { DatabaseConnectionDocument } from '../../database/schemas/database-connection.schema';
-
-export interface ValidationResult {
-  isValid: boolean;
-  errors: string[];
-  warnings: string[];
-  schemaInfo: any;
-}
+import { QueryNode, QueryNodeType, QueryValidationResult } from '../types/query-builder.types';
 
 @Injectable()
 export class QueryValidatorService {
-  constructor(private readonly databaseService: DatabaseService) {}
-
-  async validateQuery(connectionId: string, query: string): Promise<ValidationResult> {
-    const connection = await this.databaseService.getConnection(connectionId, connectionId);
-    if (!connection) {
-      throw new BadRequestException('Database connection not found');
-    }
-
-    const schemaInfo = await this.getSchemaInfo(connectionId);
+  validate(query: QueryNode): QueryValidationResult {
     const errors: string[] = [];
     const warnings: string[] = [];
 
-    // Validate query syntax
-    await this.validateSyntax(connectionId, query, errors);
+    // Basic validation
+    if (!query.table) {
+      errors.push('No table specified');
+    }
 
-    // Validate against schema
-    this.validateAgainstSchema(query, schemaInfo, errors, warnings);
+    if (query.type === QueryNodeType.SELECT && (!query.columns || query.columns.length === 0)) {
+      errors.push('No columns specified for SELECT query');
+    }
 
-    // Validate query complexity
-    this.validateQueryComplexity(query, warnings);
+    // Type-specific validation
+    switch (query.type) {
+      case QueryNodeType.SELECT:
+        this.validateSelectQuery(query, errors, warnings);
+        break;
+      case QueryNodeType.INSERT:
+        this.validateInsertQuery(query, errors, warnings);
+        break;
+      case QueryNodeType.UPDATE:
+        this.validateUpdateQuery(query, errors, warnings);
+        break;
+      case QueryNodeType.DELETE:
+        this.validateDeleteQuery(query, errors, warnings);
+        break;
+      case QueryNodeType.CREATE:
+        this.validateCreateQuery(query, errors, warnings);
+        break;
+      case QueryNodeType.DROP:
+        this.validateDropQuery(query, errors, warnings);
+        break;
+      default:
+        errors.push(`Unsupported query type: ${query.type}`);
+    }
 
     return {
       isValid: errors.length === 0,
       errors,
       warnings,
-      schemaInfo,
     };
   }
 
-  private async validateSyntax(connectionId: string, query: string, errors: string[]): Promise<void> {
-    try {
-      // Try to parse the query
-      const connection = await this.databaseService.getConnection(connectionId, connectionId);
-      if (!connection) {
-        throw new BadRequestException('Database connection not found');
-      }
-      await this.databaseService.executeQuery(connection, `EXPLAIN ${query}`);
-    } catch (error) {
-      errors.push(`Syntax error: ${error.message}`);
+  private validateSelectQuery(query: QueryNode, errors: string[], warnings: string[]): void {
+    if (query.joins) {
+      query.joins.forEach((join, index) => {
+        if (!join.table) {
+          errors.push(`Join #${index + 1} is missing table name`);
+        }
+        if (!join.on) {
+          errors.push(`Join #${index + 1} is missing ON condition`);
+        }
+      });
+    }
+
+    if (query.orderBy) {
+      query.orderBy.forEach((order, index) => {
+        if (!order.column) {
+          errors.push(`Order by #${index + 1} is missing column name`);
+        }
+        if (!order.direction) {
+          errors.push(`Order by #${index + 1} is missing direction`);
+        }
+      });
     }
   }
 
-  private async getSchemaInfo(connectionId: string): Promise<any> {
-    const connection = await this.databaseService.getConnection(connectionId, connectionId);
-    if (!connection) {
-      throw new BadRequestException('Database connection not found');
+  private validateInsertQuery(query: QueryNode, errors: string[], warnings: string[]): void {
+    if (!query.columns || query.columns.length === 0) {
+      errors.push('No columns specified for INSERT query');
     }
 
-    switch (connection.type) {
-      case DatabaseType.POSTGRESQL:
-        return this.getPostgresSchemaInfo(connectionId);
-      case DatabaseType.MYSQL:
-        return this.getMysqlSchemaInfo(connectionId);
-      case DatabaseType.SQLSERVER:
-        return this.getSqlServerSchemaInfo(connectionId);
-      case DatabaseType.MONGODB:
-        return this.getMongoSchemaInfo(connectionId);
-      default:
-        throw new BadRequestException(`Unsupported database type: ${connection.type}`);
+    if (!query.values || query.values.length === 0) {
+      errors.push('No values specified for INSERT query');
+    }
+
+    if (query.columns && query.values && query.columns.length !== query.values.length) {
+      errors.push('Number of columns does not match number of values');
     }
   }
 
-  private async getPostgresSchemaInfo(connectionId: string): Promise<any> {
-    const query = `
-      SELECT 
-        t.table_name,
-        c.column_name,
-        c.data_type,
-        c.is_nullable,
-        c.column_default,
-        tc.constraint_type,
-        kcu.column_name as key_column
-      FROM information_schema.tables t
-      JOIN information_schema.columns c ON t.table_name = c.table_name
-      LEFT JOIN information_schema.table_constraints tc ON t.table_name = tc.table_name
-      LEFT JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name
-      WHERE t.table_schema = 'public'
-    `;
-    const connection = await this.databaseService.getConnection(connectionId, connectionId);
-    if (!connection) {
-      throw new BadRequestException('Database connection not found');
+  private validateUpdateQuery(query: QueryNode, errors: string[], warnings: string[]): void {
+    if (!query.columns || query.columns.length === 0) {
+      errors.push('No columns specified for UPDATE query');
     }
-    return this.databaseService.executeQuery(connection, query);
+
+    if (!query.values || query.values.length === 0) {
+      errors.push('No values specified for UPDATE query');
+    }
+
+    if (query.columns && query.values && query.columns.length !== query.values.length) {
+      errors.push('Number of columns does not match number of values');
+    }
+
+    if (!query.where) {
+      warnings.push('UPDATE query without WHERE clause will update all rows');
+    }
   }
 
-  private async getMysqlSchemaInfo(connectionId: string): Promise<any> {
-    const query = `
-      SELECT 
-        TABLE_NAME,
-        COLUMN_NAME,
-        DATA_TYPE,
-        IS_NULLABLE,
-        COLUMN_DEFAULT,
-        CONSTRAINT_TYPE,
-        KEY_COLUMN
-      FROM information_schema.COLUMNS
-      JOIN information_schema.TABLES USING (TABLE_NAME)
-      LEFT JOIN information_schema.KEY_COLUMN_USAGE USING (TABLE_NAME, COLUMN_NAME)
-      WHERE TABLE_SCHEMA = DATABASE()
-    `;
-    const connection = await this.databaseService.getConnection(connectionId, connectionId);
-    if (!connection) {
-      throw new BadRequestException('Database connection not found');
+  private validateDeleteQuery(query: QueryNode, errors: string[], warnings: string[]): void {
+    if (!query.where) {
+      warnings.push('DELETE query without WHERE clause will delete all rows');
     }
-    return this.databaseService.executeQuery(connection, query);
   }
 
-  private async getSqlServerSchemaInfo(connectionId: string): Promise<any> {
-    const query = `
-      SELECT 
-        t.name AS table_name,
-        c.name AS column_name,
-        tp.name AS data_type,
-        c.is_nullable,
-        c.default_object_id,
-        i.type_desc AS index_type,
-        ic.key_ordinal
-      FROM sys.tables t
-      JOIN sys.columns c ON t.object_id = c.object_id
-      JOIN sys.types tp ON c.user_type_id = tp.user_type_id
-      LEFT JOIN sys.indexes i ON t.object_id = i.object_id
-      LEFT JOIN sys.index_columns ic ON i.object_id = ic.object_id AND c.column_id = ic.column_id
-    `;
-    const connection = await this.databaseService.getConnection(connectionId, connectionId);
-    if (!connection) {
-      throw new BadRequestException('Database connection not found');
-    }
-    return this.databaseService.executeQuery(connection, query);
-  }
-
-  private async getMongoSchemaInfo(connectionId: string): Promise<any> {
-    // For MongoDB, we'll get collection information
-    const connection = await this.databaseService.getConnection(connectionId, connectionId);
-    if (!connection) {
-      throw new BadRequestException('Database connection not found');
+  private validateCreateQuery(query: QueryNode, errors: string[], warnings: string[]): void {
+    if (!query.columns || query.columns.length === 0) {
+      errors.push('No columns specified for CREATE query');
     }
 
-    const db = (connection as any).db;
-    const collections = await db.listCollections().toArray();
-    const schemaInfo = {};
-
-    for (const collection of collections) {
-      const sampleDoc = await db.collection(collection.name).findOne();
-      if (sampleDoc) {
-        schemaInfo[collection.name] = this.inferMongoSchema(sampleDoc);
-      }
-    }
-
-    return schemaInfo;
-  }
-
-  private inferMongoSchema(doc: any): any {
-    const schema = {};
-    for (const [key, value] of Object.entries(doc)) {
-      schema[key] = {
-        type: typeof value,
-        isArray: Array.isArray(value),
-        isObject: typeof value === 'object' && value !== null && !Array.isArray(value),
-      };
-    }
-    return schema;
-  }
-
-  private validateAgainstSchema(query: string, schemaInfo: any, errors: string[], warnings: string[]): void {
-    // Extract table and column names from the query
-    const tables = this.extractTables(query);
-    const columns = this.extractColumns(query);
-
-    // Validate tables exist
-    for (const table of tables) {
-      if (!schemaInfo[table]) {
-        errors.push(`Table '${table}' does not exist in the schema`);
-      }
-    }
-
-    // Validate columns exist in their respective tables
-    for (const [table, cols] of Object.entries(columns)) {
-      if (schemaInfo[table]) {
-        for (const col of cols) {
-          if (!schemaInfo[table][col]) {
-            errors.push(`Column '${col}' does not exist in table '${table}'`);
+    if (query.columns) {
+      query.columns.forEach((col, index) => {
+        if (typeof col === 'string') {
+          errors.push(`Column #${index + 1} must be a ColumnDefinition object`);
+        } else {
+          if (!col.name) {
+            errors.push(`Column #${index + 1} is missing name`);
+          }
+          if (!col.type) {
+            errors.push(`Column #${index + 1} is missing type`);
           }
         }
-      }
-    }
-
-    // Check for potential type mismatches
-    this.checkTypeMismatches(query, schemaInfo, warnings);
-  }
-
-  private extractTables(query: string): string[] {
-    // Implement table extraction logic
-    return [];
-  }
-
-  private extractColumns(query: string): Record<string, string[]> {
-    // Implement column extraction logic
-    return {};
-  }
-
-  private checkTypeMismatches(query: string, schemaInfo: any, warnings: string[]): void {
-    // Implement type mismatch checking logic
-  }
-
-  private validateQueryComplexity(query: string, warnings: string[]): void {
-    const complexity = this.calculateWhereComplexity(query);
-    if (complexity > 10) {
-      warnings.push('Query complexity is high. Consider optimizing the query.');
+      });
     }
   }
 
-  private calculateWhereComplexity(query: string): number {
-    // Implement complexity calculation logic
-    return 0;
+  private validateDropQuery(query: QueryNode, errors: string[], warnings: string[]): void {
+    if (!query.table) {
+      errors.push('No table specified for DROP query');
+    }
   }
 } 
